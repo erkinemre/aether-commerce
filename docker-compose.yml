@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: postgres
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    ports: ["127.0.0.1:5432:5432"]
+  inventory:
+    build:
+      context: .
+      dockerfile: src/Aether.Inventory.Api/Dockerfile
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      ASPNETCORE_HTTP_PORTS: '8080'
+      Security__ServiceKey: '${SERVICE_API_KEY:?Set SERVICE_API_KEY in .env}'
+      ConnectionStrings__Inventory: 'Host=postgres;Port=5432;Database=inventory_db;Username=demo;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}'
+    ports: ["127.0.0.1:5102:8080"]
+  orders:
+    build:
+      context: .
+      dockerfile: src/Aether.Orders.Api/Dockerfile
+    depends_on:
+      postgres: { condition: service_healthy }
+      inventory: { condition: service_started }
+    environment:
+      ASPNETCORE_HTTP_PORTS: '8080'
+      Security__ServiceKey: '${SERVICE_API_KEY:?Set SERVICE_API_KEY in .env}'
+      ConnectionStrings__Orders: 'Host=postgres;Port=5432;Database=orders_db;Username=demo;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}'
+      Security__ClientKey: '${CLIENT_API_KEY:?Set CLIENT_API_KEY in .env}'
+      Security__TenantId: '${TENANT_ID:-demo}'
+      InventoryBaseUrl: 'http://inventory:8080'
+    ports: ["127.0.0.1:5101:8080"]

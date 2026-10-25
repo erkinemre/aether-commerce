@@ -1,0 +1,41 @@
+name: verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build
+        run: |
+          dotnet build src/Aether.Orders.Api -c Release
+          dotnet build src/Aether.Inventory.Api -c Release
+      - name: Dependency audit
+        run: |
+          dotnet list src/Aether.Orders.Api package --vulnerable --include-transitive --format json > orders-audit.json
+          dotnet list src/Aether.Inventory.Api package --vulnerable --include-transitive --format json > inventory-audit.json
+          python3 tests/check_audit.py orders-audit.json inventory-audit.json
+      - name: API and concurrency tests
+        run: |
+          export POSTGRES_PASSWORD=$(openssl rand -hex 24)
+          export CLIENT_API_KEY=$(openssl rand -hex 32)
+          export SERVICE_API_KEY=$(openssl rand -hex 32)
+          printf 'POSTGRES_PASSWORD=%s\nCLIENT_API_KEY=%s\nSERVICE_API_KEY=%s\n' "$POSTGRES_PASSWORD" "$CLIENT_API_KEY" "$SERVICE_API_KEY" > .env
+          docker compose up --build -d
+          for i in $(seq 1 60); do
+            if curl -fsS localhost:5101/health/ready && curl -fsS localhost:5102/health/ready; then break; fi
+            sleep 2
+          done
+          INTEGRATION=1 python3 tests/api_tests.py
+      - name: Diagnostics
+        if: failure()
+        run: docker compose logs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit
+          path: '*-audit.json'
